@@ -1,0 +1,161 @@
+---
+# =============================================================
+# storage.yml — Distributed Storage Setup
+# Sets up NFS server (on master) and Ceph via Rook-Ceph (cluster-wide)
+# =============================================================
+
+# ── NFS Server Setup ──────────────────────────────────────────
+- name: Configure NFS server on master node
+  hosts: masters
+  become: true
+
+  vars:
+    nfs_export_path: /srv/nfs/cluster-data
+    nfs_subnet: "192.168.1.0/24"
+
+  tasks:
+    - name: Install NFS server packages
+      apt:
+        name:
+          - nfs-kernel-server
+          - nfs-common
+        state: present
+
+    - name: Create NFS export directory
+      file:
+        path: "{{ nfs_export_path }}"
+        state: directory
+        mode: '0777'
+        owner: nobody
+        group: nogroup
+
+    - name: Configure NFS exports
+      lineinfile:
+        path: /etc/exports
+        line: "{{ nfs_export_path }} {{ nfs_subnet }}(rw,sync,no_subtree_check,no_root_squash)"
+        create: yes
+
+    - name: Apply NFS exports
+      command: exportfs -ra
+
+    - name: Start and enable NFS server
+      systemd:
+        name: nfs-kernel-server
+        state: started
+        enabled: yes
+
+# ── NFS Client Setup ──────────────────────────────────────────
+- name: Configure NFS client on worker nodes
+  hosts: workers
+  become: true
+
+  vars:
+    nfs_server_ip: "{{ hostvars['master-1']['ansible_host'] }}"
+    nfs_export_path: /srv/nfs/cluster-data
+    nfs_mount_path: /mnt/cluster-nfs
+
+  tasks:
+    - name: Install NFS client
+      apt:
+        name: nfs-common
+        state: present
+
+    - name: Create NFS mount directory
+      file:
+        path: "{{ nfs_mount_path }}"
+        state: directory
+        mode: '0755'
+
+    - name: Mount NFS share
+      mount:
+        path: "{{ nfs_mount_path }}"
+        src: "{{ nfs_server_ip }}:{{ nfs_export_path }}"
+        fstype: nfs
+        opts: "rw,sync,hard,intr"
+        state: mounted
+
+# ── Rook-Ceph Installation ────────────────────────────────────
+- name: Deploy Rook-Ceph operator via kubectl (from master)
+  hosts: masters
+  become: true
+
+  tasks:
+    - name: Add Rook-Ceph Helm repo
+      command: >
+        k3s kubectl apply -f
+        https://raw.githubusercontent.com/rook/rook/v1.13.3/deploy/examples/crds.yaml
+
+    - name: Install Rook operator
+      command: >
+        k3s kubectl apply -f
+        https://raw.githubusercontent.com/rook/rook/v1.13.3/deploy/examples/operator.yaml
+
+    - name: Wait for Rook operator to be ready
+      command: >
+        k3s kubectl -n rook-ceph rollout status deployment/rook-ceph-operator
+      retries: 10
+      delay: 15
+      register: rook_ready
+      until: rook_ready.rc == 0
+
+    - name: Deploy Ceph cluster manifest
+      copy:
+        dest: /tmp/ceph-cluster.yaml
+        content: |
+          apiVersion: ceph.rook.io/v1
+          kind: CephCluster
+          metadata:
+            name: rook-ceph
+            namespace: rook-ceph
+          spec:
+            cephVersion:
+              image: quay.io/ceph/ceph:v18
+            dataDirHostPath: /var/lib/rook
+            mon:
+              count: 3
+              allowMultiplePerNode: false
+            mgr:
+              count: 1
+            storage:
+              useAllNodes: true
+              useAllDevices: false
+              deviceFilter: "^sd[b-z]"
+            dashboard:
+              enabled: true
+            monitoring:
+              enabled: true
+
+    - name: Apply Ceph cluster
+      command: k3s kubectl apply -f /tmp/ceph-cluster.yaml
+
+    - name: Deploy Ceph Block StorageClass
+      copy:
+        dest: /tmp/ceph-storageclass.yaml
+        content: |
+          apiVersion: ceph.rook.io/v1
+          kind: CephBlockPool
+          metadata:
+            name: replicapool
+            namespace: rook-ceph
+          spec:
+            failureDomain: host
+            replicated:
+              size: 3
+          ---
+          apiVersion: storage.k8s.io/v1
+          kind: StorageClass
+          metadata:
+            name: rook-ceph-block
+            annotations:
+              storageclass.kubernetes.io/is-default-class: "true"
+          provisioner: rook-ceph.rbd.csi.ceph.com
+          parameters:
+            clusterID: rook-ceph
+            pool: replicapool
+            imageFormat: "2"
+            imageFeatures: layering
+          reclaimPolicy: Retain
+          allowVolumeExpansion: true
+
+    - name: Apply Ceph StorageClass
+      command: k3s kubectl apply -f /tmp/ceph-storageclass.yaml

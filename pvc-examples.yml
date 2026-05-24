@@ -1,0 +1,53 @@
+# =============================================================
+# storage/pvc-examples.yml
+# PersistentVolumeClaim examples for both storage backends
+# =============================================================
+
+# ── Ceph Block Storage PVC (ReadWriteOnce) ───────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: app-data-ceph
+  namespace: default
+  labels:
+    storage-backend: ceph
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: rook-ceph-block
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# ── NFS Shared Storage PV (ReadWriteMany) ────────────────────
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nfs-shared-pv
+spec:
+  capacity:
+    storage: 50Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  nfs:
+    server: 192.168.1.10   # master-1 NFS server IP
+    path: /srv/nfs/cluster-data
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shared-data-nfs
+  namespace: default
+  labels:
+    storage-backend: nfs
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  volumeName: nfs-shared-pv
+  resources:
+    requests:
+      storage: 50Gi

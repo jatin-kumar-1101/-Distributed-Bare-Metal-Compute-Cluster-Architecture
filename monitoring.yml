@@ -1,0 +1,76 @@
+---
+# =============================================================
+# monitoring.yml — Deploy Prometheus + Grafana Observability Stack
+# Uses kube-prometheus-stack Helm chart
+# =============================================================
+
+- name: Deploy Prometheus + Grafana monitoring stack
+  hosts: masters
+  become: true
+
+  vars:
+    helm_version: "v3.14.4"
+    monitoring_namespace: monitoring
+
+  tasks:
+    - name: Install Helm if not present
+      shell: |
+        curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | \
+        DESIRED_VERSION="{{ helm_version }}" bash
+      args:
+        creates: /usr/local/bin/helm
+
+    - name: Configure KUBECONFIG for Helm
+      lineinfile:
+        path: /root/.bashrc
+        line: 'export KUBECONFIG=/etc/rancher/k3s/k3s.yaml'
+        create: yes
+
+    - name: Add Prometheus community Helm repo
+      command: helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Add Grafana Helm repo
+      command: helm repo add grafana https://grafana.github.io/helm-charts
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Update Helm repos
+      command: helm repo update
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Create monitoring namespace
+      command: k3s kubectl create namespace {{ monitoring_namespace }}
+      ignore_errors: yes
+
+    - name: Copy Helm values override
+      copy:
+        src: "{{ playbook_dir }}/../../kubernetes/helm-values/kube-prometheus-values.yml"
+        dest: /tmp/kube-prometheus-values.yml
+
+    - name: Install kube-prometheus-stack
+      command: >
+        helm upgrade --install kube-prometheus-stack
+        prometheus-community/kube-prometheus-stack
+        --namespace {{ monitoring_namespace }}
+        --values /tmp/kube-prometheus-values.yml
+        --wait --timeout 10m
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Verify Prometheus pods are running
+      command: >
+        k3s kubectl get pods -n {{ monitoring_namespace }} -l app.kubernetes.io/name=prometheus
+      register: prom_pods
+
+    - name: Show Prometheus pods
+      debug:
+        msg: "{{ prom_pods.stdout_lines }}"
+
+    - name: Print Grafana access info
+      debug:
+        msg:
+          - "Grafana is available at: http://{{ ansible_host }}:3000"
+          - "Default credentials: admin / admin (change on first login!)"

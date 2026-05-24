@@ -1,0 +1,122 @@
+---
+# =============================================================
+# provision.yml — Base OS Hardening & Package Setup
+# Runs on ALL nodes before any cluster software is installed
+# =============================================================
+
+- name: Provision all cluster nodes
+  hosts: cluster
+  become: true
+  gather_facts: true
+
+  vars:
+    required_packages:
+      - curl
+      - wget
+      - git
+      - htop
+      - net-tools
+      - nfs-common
+      - open-iscsi
+      - lvm2
+      - jq
+      - unzip
+      - ca-certificates
+      - gnupg
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Upgrade all packages
+      apt:
+        upgrade: dist
+        autoremove: yes
+
+    - name: Install required packages
+      apt:
+        name: "{{ required_packages }}"
+        state: present
+
+    - name: Set hostname
+      hostname:
+        name: "{{ inventory_hostname }}"
+
+    - name: Disable swap (required for Kubernetes)
+      command: swapoff -a
+      when: ansible_swaptotal_mb > 0
+
+    - name: Remove swap from /etc/fstab
+      lineinfile:
+        path: /etc/fstab
+        regexp: '^\s*[^#]\S+\s+\S+\s+swap\s'
+        state: absent
+
+    - name: Enable required kernel modules
+      modprobe:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - br_netfilter
+        - overlay
+        - ip_vs
+        - ip_vs_rr
+        - ip_vs_wrr
+        - ip_vs_sh
+
+    - name: Persist kernel modules across reboots
+      copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          br_netfilter
+          overlay
+          ip_vs
+          ip_vs_rr
+          ip_vs_wrr
+          ip_vs_sh
+
+    - name: Configure sysctl for Kubernetes networking
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: yes
+      loop:
+        - { key: 'net.bridge.bridge-nf-call-iptables',  value: '1' }
+        - { key: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
+        - { key: 'net.ipv4.ip_forward',                 value: '1' }
+
+    - name: Configure UFW — allow cluster internal traffic
+      ufw:
+        rule: allow
+        src: "192.168.1.0/24"
+
+    - name: Allow K3s API server port
+      ufw:
+        rule: allow
+        port: "6443"
+        proto: tcp
+
+    - name: Allow Flannel VXLAN
+      ufw:
+        rule: allow
+        port: "8472"
+        proto: udp
+
+    - name: Allow Kubelet metrics
+      ufw:
+        rule: allow
+        port: "10250"
+        proto: tcp
+
+    - name: Enable UFW
+      ufw:
+        state: enabled
+        policy: allow
+
+    - name: Reboot nodes to apply all changes
+      reboot:
+        reboot_timeout: 120
+      when: ansible_facts['distribution'] == 'Ubuntu'

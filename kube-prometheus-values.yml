@@ -1,0 +1,105 @@
+# =============================================================
+# kube-prometheus-values.yml
+# Helm overrides for kube-prometheus-stack
+# Chart: prometheus-community/kube-prometheus-stack
+# =============================================================
+
+# ── Grafana ───────────────────────────────────────────────────
+grafana:
+  enabled: true
+  adminPassword: "admin"   # Change this!
+  service:
+    type: NodePort
+    nodePort: 30300
+  persistence:
+    enabled: true
+    storageClassName: rook-ceph-block
+    size: 5Gi
+  grafana.ini:
+    server:
+      root_url: "http://%(domain)s:3000"
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: default
+          orgId: 1
+          folder: Cluster
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/default
+
+# ── Prometheus ────────────────────────────────────────────────
+prometheus:
+  enabled: true
+  prometheusSpec:
+    retention: 15d
+    retentionSize: "10GB"
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: rook-ceph-block
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 20Gi
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+
+# ── Alertmanager ──────────────────────────────────────────────
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: rook-ceph-block
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 2Gi
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      group_by: ['alertname', 'namespace']
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 12h
+      receiver: 'null'
+      routes:
+        - match:
+            alertname: Watchdog
+          receiver: 'null'
+    receivers:
+      - name: 'null'
+
+# ── Node Exporter ─────────────────────────────────────────────
+nodeExporter:
+  enabled: true
+
+# ── kube-state-metrics ────────────────────────────────────────
+kubeStateMetrics:
+  enabled: true
+
+# ── Default alert rules ───────────────────────────────────────
+defaultRules:
+  create: true
+  rules:
+    alertmanager: true
+    etcd: false          # etcd not exposed in K3s by default
+    general: true
+    kubeApiserver: true
+    kubeApiserverAvailability: true
+    kubePrometheusNodeAlerting: true
+    kubePrometheusNodeRecording: true
+    kubernetesAbsent: true
+    kubernetesApps: true
+    kubernetesResources: true
+    kubernetesStorage: true
+    kubernetesSystem: true
+    node: true
+    prometheus: true
+    prometheusOperator: true

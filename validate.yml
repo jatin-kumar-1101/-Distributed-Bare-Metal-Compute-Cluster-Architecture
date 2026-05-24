@@ -1,0 +1,54 @@
+name: Validate Kubernetes Manifests
+
+on:
+  push:
+    paths:
+      - 'kubernetes/**'
+      - 'monitoring/**'
+  pull_request:
+    paths:
+      - 'kubernetes/**'
+      - 'monitoring/**'
+
+jobs:
+  kubeval:
+    name: Validate K8s Manifests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install kubeconform
+        run: |
+          curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
+            | tar xz
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Validate Kubernetes manifests
+        run: |
+          find kubernetes/manifests -name "*.yml" -o -name "*.yaml" | \
+            xargs kubeconform \
+              -strict \
+              -ignore-missing-schemas \
+              -kubernetes-version 1.29.0 \
+              -summary
+
+  helm-lint:
+    name: Helm Chart Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: 'v3.14.4'
+
+      - name: Add Prometheus Helm repo
+        run: helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+
+      - name: Lint Helm values
+        run: |
+          helm lint prometheus-community/kube-prometheus-stack \
+            --values kubernetes/helm-values/kube-prometheus-values.yml

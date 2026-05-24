@@ -1,0 +1,181 @@
+# =============================================================
+# prometheus.yml — Scrape Configuration & Alert Rules
+# Applied as a ConfigMap or standalone Prometheus config
+# =============================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+# ── Alerting ──────────────────────────────────────────────────
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+# ── Alert Rules ───────────────────────────────────────────────
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+# ── Scrape Configs ────────────────────────────────────────────
+scrape_configs:
+
+  # Prometheus itself
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Node exporter on all cluster nodes
+  - job_name: node
+    static_configs:
+      - targets:
+          - '192.168.1.10:9100'   # master-1
+          - '192.168.1.11:9100'   # worker-1
+          - '192.168.1.12:9100'   # worker-2
+          - '192.168.1.13:9100'   # worker-3
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+
+  # K3s / Kubernetes API server
+  - job_name: kubernetes-apiservers
+    kubernetes_sd_configs:
+      - role: endpoints
+    scheme: https
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: default;kubernetes;https
+
+  # Kubernetes pods — scrape annotated pods
+  - job_name: kubernetes-pods
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: true
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        target_label: __address__
+
+  # Ceph metrics via Rook-Ceph MGR
+  - job_name: ceph
+    static_configs:
+      - targets: ['rook-ceph-mgr.rook-ceph.svc.cluster.local:9283']
+    relabel_configs:
+      - target_label: cluster
+        replacement: rook-ceph
+
+---
+# =============================================================
+# Alert Rules File: /etc/prometheus/rules/cluster-alerts.yml
+# =============================================================
+groups:
+
+  - name: node.alerts
+    rules:
+
+      - alert: NodeDown
+        expr: up{job="node"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Node {{ $labels.instance }} is unreachable"
+          description: "Node {{ $labels.instance }} has been unreachable for more than 1 minute."
+
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value | printf \"%.1f\" }}% on {{ $labels.instance }}."
+
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value | printf \"%.1f\" }}% on {{ $labels.instance }}."
+
+      - alert: DiskSpaceRunningLow
+        expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Only {{ $value | printf \"%.1f\" }}% disk space left on {{ $labels.instance }}."
+
+      - alert: DiskSpaceCritical
+        expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 10
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical disk space on {{ $labels.instance }}"
+          description: "Only {{ $value | printf \"%.1f\" }}% disk space remaining on {{ $labels.instance }}!"
+
+  - name: kubernetes.alerts
+    rules:
+
+      - alert: PodCrashLooping
+        expr: rate(kube_pod_container_status_restarts_total[15m]) * 60 * 15 > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is crash-looping"
+          description: "Container {{ $labels.container }} in pod {{ $labels.pod }} has restarted {{ $value | printf \"%.0f\" }} times in 15 minutes."
+
+      - alert: PodNotReady
+        expr: kube_pod_status_ready{condition="true"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is not ready"
+
+      - alert: NodeNotReady
+        expr: kube_node_status_condition{condition="Ready", status="true"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kubernetes node {{ $labels.node }} is not ready"
+
+  - name: ceph.alerts
+    rules:
+
+      - alert: CephClusterUnhealthy
+        expr: ceph_health_status != 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ceph cluster is in an unhealthy state"
+          description: "Ceph health status: {{ $value }}. Check 'ceph status' for details."
+
+      - alert: CephOSDDown
+        expr: ceph_osd_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ceph OSD {{ $labels.ceph_daemon }} is down"

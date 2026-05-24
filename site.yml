@@ -1,0 +1,18 @@
+---
+# =============================================================
+# site.yml — Master Playbook
+# Runs all roles in order: provision → k3s → storage → monitoring
+# Usage: ansible-playbook -i inventory.ini playbooks/site.yml
+# =============================================================
+
+- name: Import provisioning playbook
+  import_playbook: provision.yml
+
+- name: Import K3s installation playbook
+  import_playbook: k3s-install.yml
+
+- name: Import storage setup playbook
+  import_playbook: storage.yml
+
+- name: Import monitoring setup playbook
+  import_playbook: monitoring.yml

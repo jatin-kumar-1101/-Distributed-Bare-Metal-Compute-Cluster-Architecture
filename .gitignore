@@ -1,0 +1,63 @@
+# =============================================================
+# .gitignore — Distributed Bare-Metal Cluster
+# NEVER commit secrets, kubeconfig, or SSH keys!
+# =============================================================
+
+# Kubernetes credentials — NEVER commit these
+kubeconfig.yml
+kubeconfig.yaml
+*.kubeconfig
+.kube/
+
+# SSH Keys
+*.pem
+*.key
+id_rsa
+id_ed25519
+cluster_key
+cluster_key.pub
+
+# Ansible vault passwords and sensitive vars
+*.vault
+vault_pass.txt
+ansible/group_vars/all/secrets.yml
+ansible/host_vars/*/secrets.yml
+
+# Sensitive inventory overrides
+ansible/inventory.local.ini
+
+# Terraform (if added later)
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Node / JS (if tooling added)
+node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Editor
+.vscode/
+.idea/
+*.iml
+
+# Temporary files
+/tmp/
+*.tmp
+*.bak
+
+# Log files
+*.log
+logs/
