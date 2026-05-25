@@ -236,18 +236,6 @@ groups:
 
 ---
 
-## 👥 Team
-
-| Member          | Role                              |
-|-----------------|-----------------------------------|
-| Jatin           | Architecture, K3s, Ansible        |
-| Jay Saraswat    | Storage (Ceph/NFS), Networking    |
-| Mahi Singhal    | Monitoring Stack, Grafana Dashboards |
-| Manish          | CI/CD, GitHub Actions Pipelines   |
-| Karan Kumar     | Fault Tolerance, Testing          |
-
----
-
 ## 📄 License
 
 This project is licensed under the **MIT License** — see [`LICENSE`](LICENSE) for details.
