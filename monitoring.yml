@@ -1,6 +1,6 @@
 ---
 # =============================================================
-# monitoring.yml — Deploy Prometheus + Grafana Observability Stack
+# monitoring.yml — Deploy Prometheus + Grafana Observability Stack  
 # Uses kube-prometheus-stack Helm chart
 # =============================================================
 
